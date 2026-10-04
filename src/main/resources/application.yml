@@ -10,11 +10,22 @@ spring:
   flyway:
     enabled: true
     baseline-on-migrate: true
-
+    out-of-order: true  # Add this line to allow migrations 7, 8, 9, and 10 to execute
   jpa:
     hibernate:
       ddl-auto: validate
     database-platform: org.hibernate.dialect.PostgreSQLDialect
+  ai:
+    openai:
+      api-key: ${GROQ_API_KEY}
+      base-url: https://api.groq.com/openai/v1
+      chat:
+        options:
+          model: openai/gpt-oss-20b
+          temperature: 0.0
+          options:
+            reasoning_effort: low
+
 jwt:
   secret-key: ${JWT_KEY}
   expiration-time-access-token-in-minutes: 10
