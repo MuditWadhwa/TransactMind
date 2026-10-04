@@ -1,0 +1,24 @@
+spring:
+  application:
+    name: et
+
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+jwt:
+  secret-key: ${JWT_KEY}
+  expiration-time-access-token-in-minutes: 10
+cors:
+  allowed-origins: ${APP_URL:http://localhost:3000}
+
+   
