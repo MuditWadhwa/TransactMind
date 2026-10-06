@@ -11,10 +11,18 @@ spring:
     enabled: true
     baseline-on-migrate: true
     out-of-order: true  # Add this line to allow migrations 7, 8, 9, and 10 to execute
+
   jpa:
     hibernate:
       ddl-auto: validate
     database-platform: org.hibernate.dialect.PostgreSQLDialect
+
+  # Add this section to configure the API Versioning Strategy for Spring Boot 4 / Framework 7
+  mvc:
+    apiversion:
+      use:
+        header: X-API-Version
+
   ai:
     openai:
       api-key: ${GROQ_API_KEY}
@@ -29,7 +37,6 @@ spring:
 jwt:
   secret-key: ${JWT_KEY}
   expiration-time-access-token-in-minutes: 10
+
 cors:
   allowed-origins: ${APP_URL:http://localhost:3000}
-
-   
