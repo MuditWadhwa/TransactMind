@@ -33,4 +33,12 @@ public class AiParseTaskServiceImpl implements AiParseTaskService {
     public void unlinkTransaction(UUID transactionId) {
         aiParseTaskRepo.unlinkTransaction(transactionId);
     }
+    @Override
+    @Transactional
+    public List<AiParsingTask> claimPendingTasks() {
+        final var tasks = aiParseTaskRepo.findByStatusWithAppUserForUpdate(AiParsingTask.Status.PENDING);
+        tasks.forEach(t -> t.setStatus(AiParsingTask.Status.PROCESSING));
+        return aiParseTaskRepo.saveAll(tasks);
+        // transaction commits here — lock released, rows now visibly PROCESSING
+    }
 }

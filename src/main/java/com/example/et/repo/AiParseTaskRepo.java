@@ -1,14 +1,19 @@
 package com.example.et.repo;
 
 import com.example.et.model.ai.AiParsingTask;
-import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Modifying;
-import org.springframework.data.jpa.repository.Query;
+import jakarta.persistence.LockModeType;
+import jakarta.persistence.QueryHint;
+import org.springframework.data.jpa.repository.*;
 
 import java.util.List;
 import java.util.UUID;
 
 public interface AiParseTaskRepo extends JpaRepository<AiParsingTask, UUID> {
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @QueryHints({@QueryHint(name = "jakarta.persistence.lock.timeout", value = "-2")}) // SKIP LOCKED, not NOWAIT
+    @Query("SELECT t FROM AiParsingTask t JOIN FETCH t.appUser WHERE t.status = :status ORDER BY t.createdAt ASC")
+    List<AiParsingTask> findByStatusWithAppUserForUpdate(AiParsingTask.Status status);
+
     @Query("SELECT t FROM AiParsingTask t JOIN FETCH t.appUser WHERE t.status = :status ORDER BY t.createdAt ASC")
     List<AiParsingTask> findByStatusWithAppUser(AiParsingTask.Status status);
 

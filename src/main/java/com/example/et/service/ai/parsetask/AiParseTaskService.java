@@ -13,4 +13,5 @@ public interface AiParseTaskService {
     AiParsingTask getById(UUID id);
 
     void unlinkTransaction(UUID transactionId);
+    List<AiParsingTask> claimPendingTasks();
 }

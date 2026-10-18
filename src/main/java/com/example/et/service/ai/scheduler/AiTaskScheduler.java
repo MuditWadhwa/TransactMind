@@ -23,14 +23,11 @@ public class AiTaskScheduler {
     public void processAiParsingTask() {
         log.info("AiTaskScheduler start");
 
-        final var pendingTasks = aiParseTaskService.getPendingTasksWithAppUser(AiParsingTask.Status.PENDING);
+        final var claimedTasks = aiParseTaskService.claimPendingTasks(); // atomic claim, lock released after this returns
 
-        for (AiParsingTask task : pendingTasks) {
+        for (AiParsingTask task : claimedTasks) {
             final var userId = task.getAppUser() != null ? task.getAppUser().getId().toString() : null;
             final var taskId = task.getId().toString();
-
-            task.setStatus(AiParsingTask.Status.PROCESSING);
-            aiParseTaskService.save(task);
 
             // Send Notification
             if (userId != null) {

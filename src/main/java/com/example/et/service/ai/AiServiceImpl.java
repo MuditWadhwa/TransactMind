@@ -11,12 +11,15 @@ import com.example.et.repo.SysCategoryRepo;
 import com.example.et.service.account.AccountService;
 import com.example.et.service.ai.parsetask.AiParseTaskService;
 import com.example.et.service.transaction.TransactionService;
+import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
-
+import org.springframework.retry.support.RetryTemplate;
+import org.springframework.retry.backoff.ExponentialBackOffPolicy;
+import org.springframework.retry.policy.SimpleRetryPolicy;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -44,7 +47,21 @@ public class AiServiceImpl implements AiService {
             String paymentMode
     ) {
     }
+    private final RetryTemplate retryTemplate = buildRetryTemplate();
 
+    private static RetryTemplate buildRetryTemplate() {
+        final var backOff = new ExponentialBackOffPolicy();
+        backOff.setInitialInterval(1000);
+        backOff.setMultiplier(2.0);
+        backOff.setMaxInterval(8000);
+
+        final var retryPolicy = new SimpleRetryPolicy(3); // 3 attempts total
+
+        final var template = new RetryTemplate();
+        template.setBackOffPolicy(backOff);
+        template.setRetryPolicy(retryPolicy);
+        return template;
+    }
     @Override
     public AiTaskDto save(String userId, AiInputDto requestBody) {
 
@@ -59,6 +76,7 @@ public class AiServiceImpl implements AiService {
     }
 
     @Override
+    @Transactional
     public void parse(AiParsingTask task) {
         log.info("Parsing task started");
         try {
@@ -70,12 +88,14 @@ public class AiServiceImpl implements AiService {
           Today's date is %s.
           """.formatted(LocalDate.now());
 
-            final var parsed = chatClient.prompt()
-                    .system(systemPrompt)
-                    .user(task.getRawInput())
-                    .call()
-                    .entity(ParsedTransaction.class);
-
+            final var parsed = retryTemplate.execute(context -> {
+                log.info("Parse attempt {} for task {}", context.getRetryCount() + 1, task.getId());
+                return chatClient.prompt()
+                        .system(systemPrompt)
+                        .user(task.getRawInput())
+                        .call()
+                        .entity(ParsedTransaction.class);
+            });
             if (parsed == null || parsed.amount() == null) {
                 task.setStatus(AiParsingTask.Status.FAILED);
                 task.setErrorMessage("Could not parse transaction details from input");
