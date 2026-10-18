@@ -31,11 +31,15 @@ public class SecurityConfig {
                 .csrf(CsrfConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(h -> h
+                        // 1. Clear asynchronous execution pathways
                         .dispatcherTypeMatchers(DispatcherType.ASYNC, DispatcherType.ERROR).permitAll()
-                        .requestMatchers("/api/auth/register", "/api/auth/login", "/error")
-                        .permitAll()
-                        .anyRequest()
-                        .authenticated())
+
+                        // 2. Explicitly open access to auth paths without relying on object wrappers
+                        .requestMatchers("/api/auth/register", "/api/auth/login", "/error").permitAll()
+
+                        // 3. Keep all other endpoints secure
+                        .anyRequest().authenticated()
+                )
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
                 .exceptionHandling(e -> e.authenticationEntryPoint(authenticationEntryPoint));
 

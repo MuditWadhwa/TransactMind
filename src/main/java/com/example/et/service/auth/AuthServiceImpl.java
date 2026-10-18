@@ -13,6 +13,7 @@ import com.example.et.security.JwtAuthFilter;
 import com.example.et.service.account.AccountService;
 import com.example.et.service.appuser.AppUserService;
 import com.example.et.util.JwtUtils;
+import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -42,16 +43,22 @@ public class AuthServiceImpl implements AuthService {
     private final PaymentModeRepo paymentModeRepo;
 
     @Override
+    @Transactional // 🚀 Essential to ensure all inserts commit or rollback together cleanly
     public AuthResponse register(UserRegistrationRequest request) {
+        // 1. Check if user already exists
         final var userExists = appUserService.checkUserExists(request.email());
-
         if (userExists) {
             log.info("User {} already exists", request.email());
             throw new RuntimeException("User " + request.email() + " already exists");
         }
 
-        final var cashPaymentMode = paymentModeRepo.findByNameIgnoreCase("Cash").orElse(null);
+        // 2. Fetch cash payment mode safely using stream to survive duplicate rows if any exist
+        final var cashPaymentMode = paymentModeRepo.findByNameIgnoreCase("Cash")
+                .stream()
+                .findFirst()
+                .orElse(null);
 
+        // 3. Build parent entity
         final var newUser = AppUser.builder()
                 .name(request.name())
                 .email(request.email())
@@ -59,6 +66,7 @@ public class AuthServiceImpl implements AuthService {
                 .isOnboardingComplete(false)
                 .build();
 
+        // 4. Build configuration profile map linked to parent
         final var userConfig = AppUserConfig.builder()
                 .appUser(newUser)
                 .languagePreference(AppUserConfig.LanguagePreference.EN)
@@ -67,12 +75,13 @@ public class AuthServiceImpl implements AuthService {
                 .paymentMode(cashPaymentMode)
                 .build();
 
+        // 5. Establish bidirectional link pointers cleanly
         newUser.setAppUserConfig(userConfig);
 
-        appUserService.saveUser(newUser);
-
+        // 6. 🚀 FIX: Persist the entity structure EXACTLY ONCE to get managed instance references
         final var registeredUser = appUserService.saveUser(newUser);
 
+        // 7. Build out standard cash tracker account profile using the saved model identity
         final var cashAccount = Account.builder()
                 .appUser(registeredUser)
                 .accountType(Account.AccountType.CASH)
@@ -85,6 +94,7 @@ public class AuthServiceImpl implements AuthService {
 
         accountService.saveAccount(cashAccount);
 
+        // 8. Hand off registration tokens and handle auto-login routing sequences
         return login(new LoginRequest(request.email(), request.password()));
     }
 

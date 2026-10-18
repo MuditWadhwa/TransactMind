@@ -6,7 +6,12 @@ spring:
     url: ${DB_URL}
     username: ${DB_USERNAME}
     password: ${DB_PASSWORD}
-
+  logging:
+    level:
+      org.springframework.ai: DEBUG
+      org.springframework.web.client.RestClient: DEBUG
+      # If your Spring AI version uses WebClient under the hood:
+      org.springframework.web.reactive.function.client.WebClient: DEBUG
   flyway:
     enabled: true
     baseline-on-migrate: true
@@ -16,13 +21,6 @@ spring:
     hibernate:
       ddl-auto: validate
     database-platform: org.hibernate.dialect.PostgreSQLDialect
-
-  # Add this section to configure the API Versioning Strategy for Spring Boot 4 / Framework 7
-  mvc:
-    apiversion:
-      use:
-        header: X-API-Version
-
   ai:
     openai:
       api-key: ${GROQ_API_KEY}

@@ -19,9 +19,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.List;
-import java.util.Optional;
-import java.util.UUID;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
@@ -196,17 +194,34 @@ public class AiServiceImpl implements AiService {
                     List.of("Start logging your daily transactions to receive AI insights.")
             );
         }
+// Replace the raw per-transaction dump with pre-aggregated stats (Java-side, not LLM-side)
+        final var byCategory = transactions.content().stream()
+                .collect(Collectors.groupingBy(
+                        t -> t.category() != null ? t.category() : "Uncategorized",
+                        Collectors.summingDouble(t -> Math.abs(t.amount()))
+                ));
 
-        final var dataSummary = transactions.content().stream()
-                .map(t -> String.format("- %s: %.2f (%s, %s, %s, %s)",
-                        t.transactionDate(),
-                        Math.abs(t.amount()),
-                        t.type(),
-                        t.category() != null ? t.category() : "Uncategorized",
-                        t.description(),
-                        t.paymentMode()))
+        final var totalSpend = byCategory.values().stream().mapToDouble(Double::doubleValue).sum();
+
+        final var categorySummary = byCategory.entrySet().stream()
+                .sorted(Map.Entry.<String, Double>comparingByValue().reversed())
+                .limit(10) // cap regardless of how many categories exist
+                .map(e -> String.format("- %s: %.2f (%.1f%% of spend)", e.getKey(), e.getValue(),
+                        totalSpend > 0 ? (e.getValue() / totalSpend) * 100 : 0))
                 .collect(Collectors.joining("\n"));
 
+// Largest individual transactions as anomaly candidates, capped
+        final var topTransactions = transactions.content().stream()
+                .sorted(Comparator.comparingDouble((TransactionResponseDto t) -> Math.abs(t.amount())).reversed())
+                .limit(15)
+                .map(t -> String.format("- %s: %.2f (%s, %s)", t.transactionDate(), Math.abs(t.amount()),
+                        t.category() != null ? t.category() : "Uncategorized", t.description()))
+                .collect(Collectors.joining("\n"));
+
+        final var dataSummary = String.format(
+                "Total transactions: %d, Total spend: %.2f\n\nSpend by category:\n%s\n\nLargest transactions:\n%s",
+                transactions.content().size(), totalSpend, categorySummary, topTransactions
+        );
         final var systemPrompt = """
     You are a personal financial advisor. Analyze the given month's transactions and provide structured insights.
     

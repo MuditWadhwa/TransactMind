@@ -336,12 +336,36 @@ public class DataSeederServiceImpl implements DataSeederService {
             ExpenseDetail expenseInfo,
             LocalDate txnDate
     ) {
+        float amount = expenseInfo.amount();
+
+        // 1. Proactively check if savings account needs a top-up before making ANY expense
+        Account savingsAccount = accountService.getUserAccount(userId, savingsAccountId);
+        float savingsBalance = savingsAccount.getBalance() != null ? savingsAccount.getBalance() : 0.0f;
+
+        if (savingsBalance < amount + 2000.0f) {
+            transactionsService.createTransaction(userId, new TransactionRequestDto(
+                    null,
+                    Transaction.TransactionType.INCOME,
+                    60000.0f,
+                    txnDate,
+                    "Consulting Payout / Returns",
+                    savingsAccountId,
+                    null,
+                    null,
+                    upiPaymentMode != null ? upiPaymentMode.getId() : null,
+                    null,
+                    null
+            ));
+        }
+
         UUID accountId = savingsAccountId;
         UUID cardId = null;
         UUID paymentModeId = upiPaymentMode != null ? upiPaymentMode.getId() : null;
 
         int choice = faker.number().numberBetween(0, 4);
+
         if (choice == 0 && creditCardId != null && creditCardPaymentMode != null) {
+            // Credit cards use limit, but let's make sure it's validly assigned
             accountId = null;
             cardId = creditCardId;
             paymentModeId = creditCardPaymentMode.getId();
@@ -350,88 +374,60 @@ public class DataSeederServiceImpl implements DataSeederService {
             cardId = debitCardId;
             paymentModeId = debitCardPaymentMode.getId();
         } else if (choice == 2 && cashAccountId != null && cashPaymentMode != null) {
-            accountId = cashAccountId;
-            paymentModeId = cashPaymentMode.getId();
-        }
+            // Check cash balance, top up if needed via transfer from savings
+            Account cashAccount = accountService.getUserAccount(userId, cashAccountId);
+            float cashBalance = cashAccount.getBalance() != null ? cashAccount.getBalance() : 0.0f;
 
-        // Resolve target account to check live balance
-        Account targetAccount = getTargetAccount(userId, accountId, cardId);
-        float amount = expenseInfo.amount();
-
-        if (targetAccount != null) {
-            float currentBalance = targetAccount.getBalance() != null ? targetAccount.getBalance() : 0.0f;
-
-            // If cash account has insufficient balance
-            if (targetAccount.getAccountType() == Account.AccountType.CASH && currentBalance - amount < 200.0f) {
-                // Try to withdraw from savings to cash first
-                final var savingsAccount = accountService.getUserAccount(userId, savingsAccountId);
-                if (savingsAccount.getBalance() != null && savingsAccount.getBalance() >= 6000.0f) {
-                    transactionsService.createTransaction(userId, new TransactionRequestDto(
-                            null,
-                            Transaction.TransactionType.TRANSFER,
-                            5000.0f,
-                            txnDate,
-                            "ATM Cash Withdrawal",
-                            savingsAccountId,
-                            null,
-                            cashAccountId,
-                            cashPaymentMode != null ? cashPaymentMode.getId() : null,
-                            null,
-                            null
-                    ));
-                    targetAccount = accountService.getUserAccount(userId, cashAccountId);
-                    currentBalance = targetAccount.getBalance() != null ? targetAccount.getBalance() : 0.0f;
-                } else {
-                    // Fallback to UPI from savings
-                    accountId = savingsAccountId;
-                    cardId = null;
-                    paymentModeId = upiPaymentMode != null ? upiPaymentMode.getId() : null;
-                    targetAccount = savingsAccount;
-                    currentBalance = targetAccount.getBalance() != null ? targetAccount.getBalance() : 0.0f;
-                }
-            }
-
-            // If credit card account has insufficient limit/balance
-            if (targetAccount.getAccountType() == Account.AccountType.CREDIT && currentBalance - amount < 500.0f) {
-                // Fallback to UPI from savings
-                accountId = savingsAccountId;
-                cardId = null;
-                paymentModeId = upiPaymentMode != null ? upiPaymentMode.getId() : null;
-                targetAccount = accountService.getUserAccount(userId, savingsAccountId);
-                currentBalance = targetAccount.getBalance() != null ? targetAccount.getBalance() : 0.0f;
-            }
-
-            // If savings account balance is getting low, inject an income top-up before the expense
-            if (currentBalance - amount < 1000.0f) {
+            if (cashBalance < amount) {
                 transactionsService.createTransaction(userId, new TransactionRequestDto(
                         null,
-                        Transaction.TransactionType.INCOME,
-                        60000.0f,
+                        Transaction.TransactionType.TRANSFER,
+                        Math.max(5000.0f, amount),
                         txnDate,
-                        "Consulting Payout / Returns",
+                        "ATM Cash Withdrawal",
                         savingsAccountId,
                         null,
-                        null,
-                        upiPaymentMode != null ? upiPaymentMode.getId() : null,
+                        cashAccountId,
+                        cashPaymentMode != null ? cashPaymentMode.getId() : null,
                         null,
                         null
                 ));
             }
+            accountId = cashAccountId;
+            paymentModeId = cashPaymentMode.getId();
         }
 
-        transactionsService.createTransaction(userId, new TransactionRequestDto(
-                null,
-                Transaction.TransactionType.EXPENSE,
-                amount,
-                txnDate,
-                expenseInfo.description(),
-                accountId,
-                cardId,
-                null,
-                paymentModeId,
-                category != null ? category.getId() : null,
-                null
-        ));
+        // Final safety execution
+        try {
+            transactionsService.createTransaction(userId, new TransactionRequestDto(
+                    null,
+                    Transaction.TransactionType.EXPENSE,
+                    amount,
+                    txnDate,
+                    expenseInfo.description(),
+                    accountId,
+                    cardId,
+                    null,
+                    paymentModeId,
+                    category != null ? category.getId() : null,
+                    null
+            ));
+        } catch (RuntimeException e) {
+            // Ultimate fallback: if anything fails due to balance, force it through savings via UPI
+            transactionsService.createTransaction(userId, new TransactionRequestDto(
+                    null,
+                    Transaction.TransactionType.EXPENSE,
+                    amount,
+                    txnDate,
+                    expenseInfo.description(),
+                    savingsAccountId,
+                    null,
+                    null,
+                    upiPaymentMode != null ? upiPaymentMode.getId() : null,
+                    category != null ? category.getId() : null,
+                    null
+            ));
+        }
     }
 
     private Account getTargetAccount(String userId, UUID accountId, UUID cardId) {
