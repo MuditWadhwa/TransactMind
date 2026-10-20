@@ -3,7 +3,9 @@ package com.example.et.service.ai.chat;
 import com.example.et.controller.dto.AiChatRequestDto;
 import com.example.et.controller.dto.AiChatResponseDto;
 import com.example.et.controller.dto.TransactionFilterParams;
+import com.example.et.repo.TransactionRepo;
 import com.example.et.service.account.AccountService;
+import com.example.et.service.ai.embedding.EmbeddingService;
 import com.example.et.service.transaction.TransactionService;
 
 import lombok.RequiredArgsConstructor;
@@ -31,7 +33,8 @@ public class AiChatServiceImpl implements AiChatService{
     private final AccountService accountService;
     private final TransactionService transactionService;
     private final ChatClient chatClient;
-
+    private final EmbeddingService embeddingService;
+    private final TransactionRepo transactionRepo;
     private final Map<String, ChatSession> sessions = new ConcurrentHashMap<>();
     private static final long SESSION_TIMEOUT_SECONDS = 900;
 
@@ -51,59 +54,54 @@ public class AiChatServiceImpl implements AiChatService{
         final var userUuid = UUID.fromString(userId);
 
         final var sessionId = (request.sessionId() != null && !request.sessionId().isBlank())
-                ? request.sessionId()
-                : UUID.randomUUID().toString();
+                ? request.sessionId() : UUID.randomUUID().toString();
 
         final var sessionKey = userId + ":" + sessionId;
         final var session = sessions.compute(sessionKey, (k, existing) -> {
-            if (existing == null || isExpired(existing)) {
-                return new ChatSession(new ArrayList<>(), Instant.now());
-            }
+            if (existing == null || isExpired(existing)) return new ChatSession(new ArrayList<>(), Instant.now());
             return existing.withUpdatedAccess();
         });
 
         final var accounts = accountService.getUserAccounts(userId);
-        final var transactions = transactionService.getAllTransactions(userId, TransactionFilterParams.empty(), PageRequest.of(0, 100));
-
         final var accountsSummary = accounts.stream()
-                .map(a -> String.format("- Account: %s (%s), Balance: %.2f",
-                        a.lastFourDigits(),
-                        a.accountType(),
-                        a.balance()))
+                .map(a -> String.format("- Account: %s (%s), Balance: %.2f", a.lastFourDigits(), a.accountType(), a.balance()))
                 .collect(Collectors.joining("\n"));
 
-        final var transactionsSummary = transactions.content().stream()
+        // Retrieval: semantically relevant transactions, not the raw 100-most-recent dump
+        final var queryEmbedding = embeddingService.embed(request.message());
+        final var relevantTxns = transactionRepo.findSimilarTransactions(
+                userUuid, embeddingService.toVectorLiteral(queryEmbedding), 15);
+
+        final var transactionsSummary = relevantTxns.stream()
                 .map(t -> String.format("- %s: %.2f | %s | Category: %s | Description: %s",
-                        t.transactionDate(),
-                        Math.abs(t.amount()),
-                        t.type(),
-                        t.category() != null ? t.category() : "Uncategorized",
-                        t.description()))
+                        t.getTransactionDate(), Math.abs(t.getAmount()), t.getType(),
+                        t.getTransactionCategory() != null ? t.getTransactionCategory().getName() : "Uncategorized",
+                        t.getDescription()))
                 .collect(Collectors.joining("\n"));
 
         final var systemPrompt = """
-        You are a helpful and concise personal finance assistant.
-        Today's date is %s.
+      You are a helpful and concise personal finance assistant.
+      Today's date is %s.
 
-        User Accounts:
-        %s
+      User Accounts:
+      %s
 
-        Recent Transactions (Up to last 100):
-        %s
+      Transactions relevant to the user's question:
+      %s
 
-        Answer the user's financial questions accurately based on this data. Keep responses clear and concise.
-        """.formatted(LocalDate.now(), accountsSummary, transactionsSummary);
+      Answer the user's financial questions accurately based on this data. Keep responses clear and concise.
+      """.formatted(LocalDate.now(), accountsSummary, transactionsSummary);
 
         session.history().add(new UserMessage(request.message()));
 
-        final var promptSpec = chatClient.prompt()
-                .system(systemPrompt)
-                .messages(session.history());
+        // Cap history sent to the model — fixes unbounded prompt growth within long sessions
+        final var recentHistory = session.history().size() > 10
+                ? session.history().subList(session.history().size() - 10, session.history().size())
+                : session.history();
 
-        final var reply = promptSpec.call().content();
+        final var reply = chatClient.prompt().system(systemPrompt).messages(recentHistory).call().content();
 
         session.history().add(new AssistantMessage(reply != null ? reply : ""));
-
         return new AiChatResponseDto(reply, sessionId);
     }
 
