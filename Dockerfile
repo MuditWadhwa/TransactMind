@@ -11,4 +11,6 @@ FROM eclipse-temurin:17-jre
 WORKDIR /app
 COPY --from=builder /app/target/*.jar app.jar
 EXPOSE 8080
-CMD ["java","-jar","app.jar"]
+
+# Updated to include your required system properties (switched dev to prod)
+CMD ["sh", "-c", "java -Duser.timezone=Asia/Kolkata -Dspring.profiles.active=prod -jar app.jar"]
